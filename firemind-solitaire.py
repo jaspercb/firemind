@@ -17,6 +17,8 @@ CMD_COPY = "copy"
 CMD_EFFECT = "effect"
 CMD_DRAW = "draw"
 CMD_ECHO = "echo"
+CMD_PASSPRIORITY = "passpriority"
+CMD_PASSUNTILCLEAR = "passuntilclear"
 
 OWNER_YOU = "You"
 OWNER_OTHER = "Someone else"
@@ -32,12 +34,12 @@ class Permanent(object):
         pass
 
 class ThousandYearStorm(Permanent):
-    def oncast(self, cast_obj):
+    def oncast(self, spell):
         if spell.owner == OWNER_YOU and spell.typ in ("Instant", "Sorcery"):
             prior_instants = [spell for spell in self.game.prior_casts if spell.owner == OWNER_YOU and
                 spell.typ in ("Instant", "Sorcery")] # TODO: and you cast it
             for i in range(len(prior_instants)):
-                self.game.copy_stackobject(cast_obj)
+                self.game.copy_stackobject(spell)
 
 class Mindmoil(Permanent):
     def oncast(self, cast_obj):
@@ -149,7 +151,11 @@ class Game(object):
             self.permanents.add(PermanentAbilities[effect.name](self))
 
     def process_instruction(self, instruction):
-        cmd, other = instruction.split(maxsplit=1)
+        if ' ' in instruction:
+                cmd, other = instruction.split(maxsplit=1)
+        else:
+            cmd = instruction
+            other = None
         if cmd.lower() == CMD_ADDMANA:
             self.mana += int(other)
         elif cmd.lower() == CMD_CAST:
@@ -175,6 +181,12 @@ class Game(object):
                     listener.ondraw()
         elif cmd.lower() == CMD_ECHO:
             print(other)
+        elif cmd.lower() == CMD_PASSPRIORITY:
+            self.resolve()
+        elif cmd.lower() == CMD_PASSUNTILCLEAR:
+            while self.stack:
+                self.resolve()
+
     def run(self):
         while True:
             inp = (yield)
@@ -198,4 +210,6 @@ try:
         runner.send(inp)
 except StopIteration:
     pass
+except EOFError:
+    runner.send("passuntilclear")
 
