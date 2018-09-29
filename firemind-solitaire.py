@@ -10,9 +10,16 @@ TODO:
 import scrython
 import copy
 
-CMD_ADD = "add"
+CMD_ADDMANA = "add"
 CMD_CAST = "cast"
+CMD_ENEMYCAST = "enemycast"
 CMD_COPY = "copy"
+CMD_EFFECT = "effect"
+CMD_DRAW = "draw"
+CMD_ECHO = "echo"
+
+OWNER_YOU = "You"
+OWNER_OTHER = "Someone else"
 
 class Permanent(object):
     def __init__(self, game):
@@ -26,18 +33,23 @@ class Permanent(object):
 
 class ThousandYearStorm(Permanent):
     def oncast(self, cast_obj):
-        prior_instants = [spell for spell in self.game.prior_casts if
-                (spell.typ == "Instant" or spell.typ == "Sorcery")] # TODO: and you cast it
-        for i in range(len(prior_instants)):
-            self.game.copy_stackobject(cast_obj)
+        if spell.owner == OWNER_YOU and spell.typ in ("Instant", "Sorcery"):
+            prior_instants = [spell for spell in self.game.prior_casts if spell.owner == OWNER_YOU and
+                spell.typ in ("Instant", "Sorcery")] # TODO: and you cast it
+            for i in range(len(prior_instants)):
+                self.game.copy_stackobject(cast_obj)
 
 class Mindmoil(Permanent):
     def oncast(self, cast_obj):
         self.game.make_stackobject("Put your hand on the bottom of your library, then draw that many cards", typ="Triggered Ability")
 
-def NivMizzetParun(Permanent):
+class NivMizzetParun(Permanent):
+    def oncast(self, cast_obj):
+        if cast_obj.typ in ("Instant", "Sorcery"):
+            self.game.make_stackobject("Draw a card", typ="Triggered Ability", on_resolution=["draw 1"])
+
     def ondraw(self):
-        self.game.make_stackobject("Deal 1 damage to any target")
+        self.game.make_stackobject("Deal 1 damage to any target", typ="Triggered Ability")
 
 PermanentAbilities = {
     "Thousand-Year Storm" : ThousandYearStorm,
@@ -63,7 +75,7 @@ class Game(object):
     IdGenerator = __Counter()
 
     class StackObject(object):
-        def __init__(self, id, name, typ="Instant", is_copy=False, on_resolution=[]):
+        def __init__(self, id, name, owner=OWNER_YOU, typ="Instant", is_copy=False, on_resolution=[]):
             try:
                 card = scrython.cards.Named(fuzzy=name)
             except:
@@ -74,9 +86,10 @@ class Game(object):
                 self.typ = typ
                 self.on_resolution = on_resolution
             else:
-                self.name = card.name()
-                self.typ = card.type_line()
-                self.on_resolution = on_resolution + [card.oracle_text()]
+                self.name = card.name().encode('ascii', 'ignore').decode('ascii')
+                self.typ = card.type_line().encode('ascii', 'ignore').decode('ascii')
+                self.on_resolution = on_resolution + ["echo " + card.oracle_text().encode('ascii', 'ignore').decode('ascii')]
+            self.owner = owner
             self.is_copy = is_copy
             self.id = id
 
@@ -131,30 +144,37 @@ class Game(object):
         self.stack.pop()
         print("RESOLVES: {0}".format(effect))
         for on_resolution in effect.on_resolution:
-            print('\t', on_resolution)
+            self.process_instruction(on_resolution)
         if effect.name in PermanentAbilities:
             self.permanents.add(PermanentAbilities[effect.name](self))
 
     def process_instruction(self, instruction):
         cmd, other = instruction.split(maxsplit=1)
-        if cmd == "add":
+        if cmd.lower() == CMD_ADDMANA:
             self.mana += int(other)
-        elif cmd == "cast":
+        elif cmd.lower() == CMD_CAST:
             name = other
-            stackobj = self.make_stackobject(name)
+            stackobj = self.make_stackobject(name, owner=OWNER_YOU)
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
-        elif cmd == "copy":
+        elif cmd.lower() == CMD_ENEMYCAST:
+            name = other
+            stackobj = self.make_stackobject(name, owner=OWNER_OTHER)
+            for listener in self.permanents:
+                listener.oncast(stackobj)
+            self.prior_casts.add(stackobj)
+        elif cmd.lower() == CMD_COPY:
             id = other
             self.copy_stackobject(id)
-        elif cmd == "effect":
+        elif cmd.lower() == CMD_EFFECT:
             self.make_stackobject(other, typ="Effect")
-        elif cmd == "draw":
+        elif cmd.lower() == CMD_DRAW:
             for listener in self.permanents:
                 for i in range(int(other)):
                     listener.ondraw()
-
+        elif cmd.lower() == CMD_ECHO:
+            print(other)
     def run(self):
         while True:
             inp = (yield)
