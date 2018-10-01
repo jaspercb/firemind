@@ -2,13 +2,19 @@
 
 """
 TODO:
-    * Thousand-Year Storm
-    Arbitrary instants and sorceries
+    * Prettify input more with curses library
+    * Spell targeting
+    * Refactor permanent objects, or at the very least display them
+    * Add more neat-o interactions
+    * Add mana tracking (plus electromancer)
+        * Smart mana spending?
+    * Build in resolution effects of more spells
 
 """
 
 import scrython
 import copy
+import curses
 
 CMD_ADDMANA = "add"
 CMD_CAST = "cast"
@@ -102,21 +108,16 @@ class Game(object):
                     self.typ,
                     '*' if self.is_copy else '')
 
-    def render(self):
-        if self.stack:
-            print("CURRENT STACK:")
-            for i in self.stack:
-                print('\t', i)
-        else:
-            print("THE STACK IS EMPTY")
-        print("MANA REMAINING:", self.mana)
-
     def make_stackobject(self, *args, **kwargs):
         id = next(self.IdGenerator)
         obj = self.StackObject(id, *args, **kwargs)
         self.stackobjects[id] = obj
         self.stack.append(obj)
         return obj
+
+    def log(self, message):
+        for listener in self.listeners:
+            listener.send(message)
 
     def copy_stackobject(self, id):
         newId = next(self.IdGenerator)
@@ -131,7 +132,7 @@ class Game(object):
                 if len(matches):
                     template = matches[0]
                 else:
-                    print("I DON'T KNOW WHAT YOU JUST TRIED TO COPY")
+                    self.log("I DON'T KNOW WHAT YOU JUST TRIED TO COPY")
                     return
         assert isinstance(template, self.StackObject)
         obj = copy.deepcopy(template)
@@ -144,7 +145,7 @@ class Game(object):
     def resolve(self):
         effect = self.stack[-1]
         self.stack.pop()
-        print("RESOLVES: {0}".format(effect))
+        self.log("{0} resolves. ({1})".format(effect.name, effect.on_resolution))
         for on_resolution in effect.on_resolution:
             self.process_instruction(on_resolution)
         if effect.name in PermanentAbilities:
@@ -152,7 +153,7 @@ class Game(object):
 
     def process_instruction(self, instruction):
         if ' ' in instruction:
-                cmd, other = instruction.split(maxsplit=1)
+            cmd, other = instruction.split(maxsplit=1)
         else:
             cmd = instruction
             other = None
@@ -180,7 +181,7 @@ class Game(object):
                 for i in range(int(other)):
                     listener.ondraw()
         elif cmd.lower() == CMD_ECHO:
-            print(other)
+            self.log(other)
         elif cmd.lower() == CMD_PASSPRIORITY:
             self.resolve()
         elif cmd.lower() == CMD_PASSUNTILCLEAR:
@@ -198,18 +199,63 @@ class Game(object):
                     return
             else:
                 self.process_instruction(inp)
-            self.render()
 
-g = Game()
-runner = g.run()
-runner.send(None)
 
-try:
-    while True:
-        inp = input('>>> ')
-        runner.send(inp)
-except StopIteration:
-    pass
-except EOFError:
-    runner.send("passuntilclear")
+class GameDisplay():
+    def __init__(self, stdscr, game):
+        self.eventlog = []
+        self.game = game
+        game.listeners = [self]
 
+        # screen setup
+        self.screen = stdscr
+        y, x = self.screen.getbegyx()
+        h, w = self.screen.getmaxyx()
+        halfw = int(w/2)
+
+        self.inputscreen = curses.newwin(2, w, y, x)
+
+        self.stackscreen = curses.newwin(h, halfw, y + 2, x)
+
+        self.logscreen = curses.newwin(h, w-halfw, y + 2, x + halfw)
+
+    def send(self, message):
+        self.eventlog.append(message)
+
+    def render_stack(self):
+        self.stackscreen.clear()
+        self.stackscreen.border()
+        for i, stackelement in enumerate(self.game.stack):
+            self.stackscreen.addstr(1 + i, 1, str(stackelement))
+        self.stackscreen.refresh()
+
+    def render_event_log(self):
+        self.logscreen.clear()
+        self.logscreen.border()
+        for i, logmsg in enumerate(self.eventlog):
+            self.logscreen.addstr(1 + i, 1, str(logmsg))
+        self.logscreen.refresh()
+
+    def run(self):
+        runner = self.game.run()
+        runner.send(None) # start consuming generator
+        runner.send("cast Thousand-Year Storm")
+        runner.send(CMD_PASSUNTILCLEAR)
+        runner.send("cast Opt")
+        runner.send("cast Lightning Bolt")
+        while True:
+            self.render_stack()
+            self.render_event_log()
+            cmd = self.inputscreen.getstr(0, 0).decode() # b"" -> ""
+            self.inputscreen.clear()
+            self.inputscreen.refresh()
+            self.send(cmd)
+            runner.send(str(cmd))
+
+def main(stdscr):
+    curses.echo()
+    g = Game()
+    gDisplay = GameDisplay(stdscr, g)
+    gDisplay.run()
+
+curses.wrapper(main)
