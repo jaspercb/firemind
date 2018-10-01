@@ -54,7 +54,7 @@ class Mindmoil(Permanent):
 class NivMizzetParun(Permanent):
     def oncast(self, cast_obj):
         if cast_obj.typ in ("Instant", "Sorcery"):
-            self.game.make_stackobject("Draw a card", typ="Triggered Ability", on_resolution=["draw 1"])
+            self.game.make_stackobject("Draw a card (Niv Mizzet)", typ="Triggered Ability", on_resolution=["draw 1"])
 
     def ondraw(self):
         self.game.make_stackobject("Deal 1 damage to any target", typ="Triggered Ability")
@@ -64,6 +64,10 @@ PermanentAbilities = {
     "Mindmoil" : Mindmoil,
     "Arjun, the Shifting Flame" : Mindmoil,
     "Niv-Mizzet, Parun" : NivMizzetParun
+}
+
+SpellEffects = {
+    "Opt" : ["draw 1"]
 }
 
 class Game(object):
@@ -83,10 +87,13 @@ class Game(object):
     IdGenerator = __Counter()
 
     class StackObject(object):
-        def __init__(self, id, name, owner=OWNER_YOU, typ="Instant", is_copy=False, on_resolution=[]):
-            try:
-                card = scrython.cards.Named(fuzzy=name)
-            except:
+        def __init__(self, id, name, owner=OWNER_YOU, typ="Instant", scryfall=False, is_copy=False, on_resolution=[]):
+            if scryfall:
+                try:
+                    card = scrython.cards.Named(fuzzy=name)
+                except:
+                    card = None
+            else:
                 card = None
 
             if not card:
@@ -97,7 +104,7 @@ class Game(object):
                 self.name = card.name().encode('ascii', 'ignore').decode('ascii')
                 self.typ = card.type_line().encode('ascii', 'ignore').decode('ascii')
                 self.description = card.oracle_text().encode('ascii', 'ignore').decode('ascii')
-            self.on_resolution = on_resolution
+            self.on_resolution = SpellEffects.get(self.name, []) + on_resolution
             self.owner = owner
             self.is_copy = is_copy
             self.id = id
@@ -115,7 +122,7 @@ class Game(object):
         self.stackobjects[id] = obj
         self.stack.append(obj)
         return obj
-
+    
     def log(self, message):
         for listener in self.listeners:
             listener.send(message)
@@ -162,13 +169,13 @@ class Game(object):
             self.mana += int(other)
         elif cmd.lower() == CMD_CAST:
             name = other
-            stackobj = self.make_stackobject(name, owner=OWNER_YOU)
+            stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_YOU)
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
         elif cmd.lower() == CMD_ENEMYCAST:
             name = other
-            stackobj = self.make_stackobject(name, owner=OWNER_OTHER)
+            stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_OTHER)
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
