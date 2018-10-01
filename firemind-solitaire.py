@@ -2,7 +2,6 @@
 
 """
 TODO:
-    * Prettify input more with curses library
     * Spell targeting
     * Refactor permanent objects, or at the very least display them
     * Add more neat-o interactions
@@ -13,6 +12,7 @@ TODO:
 """
 
 import scrython
+import math
 import copy
 import curses
 
@@ -43,7 +43,7 @@ class ThousandYearStorm(Permanent):
     def oncast(self, spell):
         if spell.owner == OWNER_YOU and spell.typ in ("Instant", "Sorcery"):
             prior_instants = [spell for spell in self.game.prior_casts if spell.owner == OWNER_YOU and
-                spell.typ in ("Instant", "Sorcery")] # TODO: and you cast it
+                spell.typ in ("Instant", "Sorcery")]
             for i in range(len(prior_instants)):
                 self.game.copy_stackobject(spell)
 
@@ -92,11 +92,12 @@ class Game(object):
             if not card:
                 self.name = name
                 self.typ = typ
-                self.on_resolution = on_resolution
+                self.description = ""
             else:
                 self.name = card.name().encode('ascii', 'ignore').decode('ascii')
                 self.typ = card.type_line().encode('ascii', 'ignore').decode('ascii')
-                self.on_resolution = on_resolution + ["echo " + card.oracle_text().encode('ascii', 'ignore').decode('ascii')]
+                self.description = card.oracle_text().encode('ascii', 'ignore').decode('ascii')
+            self.on_resolution = on_resolution
             self.owner = owner
             self.is_copy = is_copy
             self.id = id
@@ -145,7 +146,7 @@ class Game(object):
     def resolve(self):
         effect = self.stack[-1]
         self.stack.pop()
-        self.log("{0} resolves. ({1})".format(effect.name, effect.on_resolution))
+        self.log("{0} resolves. ({1})".format(effect.name, effect.description))
         for on_resolution in effect.on_resolution:
             self.process_instruction(on_resolution)
         if effect.name in PermanentAbilities:
@@ -215,26 +216,36 @@ class GameDisplay():
 
         self.inputscreen = curses.newwin(2, w, y, x)
 
-        self.stackscreen = curses.newwin(h, halfw, y + 2, x)
+        self.stackscreenborder = curses.newwin(h, halfw, y+2, x)
+        self.stackscreenborder.border()
+        self.stackscreenborder.noutrefresh()
+        self.stackscreen = curses.newwin(h-2, halfw-2, y + 3, x+1)
 
-        self.logscreen = curses.newwin(h, w-halfw, y + 2, x + halfw)
+        self.logscreenborder = curses.newwin(h, w-halfw, y + 2, x + halfw - 1)
+        self.logscreenborder.border()
+        self.logscreenborder.noutrefresh()
+        self.logscreen = curses.newwin(h - 2, w-halfw - 2, y + 3, x + halfw)
 
     def send(self, message):
         self.eventlog.append(message)
 
     def render_stack(self):
         self.stackscreen.clear()
-        self.stackscreen.border()
         for i, stackelement in enumerate(self.game.stack):
-            self.stackscreen.addstr(1 + i, 1, str(stackelement))
-        self.stackscreen.refresh()
+            self.stackscreen.addstr(i, 0, str(stackelement))
+        self.stackscreen.noutrefresh()
 
     def render_event_log(self):
         self.logscreen.clear()
-        self.logscreen.border()
-        for i, logmsg in enumerate(self.eventlog):
-            self.logscreen.addstr(1 + i, 1, str(logmsg))
-        self.logscreen.refresh()
+        lineno = 0
+        maxnlines, linewidth = self.logscreen.getmaxyx()
+        for logmsg in self.eventlog:
+            nlines = math.ceil(len(str(logmsg))/linewidth)
+            for i in range(nlines):
+                if lineno + i < maxnlines:
+                    self.logscreen.addstr(lineno + i, 0, str(logmsg[linewidth*i:linewidth*(i+1)]))
+            lineno += nlines
+        self.logscreen.noutrefresh()
 
     def run(self):
         runner = self.game.run()
@@ -243,14 +254,18 @@ class GameDisplay():
         runner.send(CMD_PASSUNTILCLEAR)
         runner.send("cast Opt")
         runner.send("cast Lightning Bolt")
-        while True:
-            self.render_stack()
-            self.render_event_log()
-            cmd = self.inputscreen.getstr(0, 0).decode() # b"" -> ""
-            self.inputscreen.clear()
-            self.inputscreen.refresh()
-            self.send(cmd)
-            runner.send(str(cmd))
+        try:
+            while True:
+                self.render_stack()
+                self.render_event_log()
+                cmd = self.inputscreen.getstr(0, 0).decode() # b"" -> ""
+                self.inputscreen.clear()
+                self.inputscreen.noutrefresh()
+                curses.doupdate()
+                self.send(cmd)
+                runner.send(str(cmd))
+        except StopIteration:
+            pass
 
 def main(stdscr):
     curses.echo()
