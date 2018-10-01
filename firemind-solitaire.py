@@ -12,16 +12,19 @@ TODO:
 """
 
 import scrython
+import re
 import math
 import copy
 import curses
 
-CMD_ADDMANA = "add"
+CMD_ADDMANA = "addmana"
 CMD_CAST = "cast"
 CMD_ENEMYCAST = "enemycast"
 CMD_COPY = "copy"
 CMD_EFFECT = "effect"
 CMD_DRAW = "draw"
+CMD_DISCARD = "discard"
+CMD_PUTINLIBRARY = "putinlibrary"
 CMD_ECHO = "echo"
 CMD_PASSPRIORITY = "passpriority"
 CMD_PASSUNTILCLEAR = "passuntilclear"
@@ -57,7 +60,7 @@ class NivMizzetParun(Permanent):
             self.game.make_stackobject("Draw a card (Niv Mizzet)", typ="Triggered Ability", on_resolution=["draw 1"])
 
     def ondraw(self):
-        self.game.make_stackobject("Deal 1 damage to any target", typ="Triggered Ability")
+        self.game.make_stackobject("Deal 1 damage to any target (Niv-Mizzet, Parun)", typ="Triggered Ability")
 
 PermanentAbilities = {
     "Thousand-Year Storm" : ThousandYearStorm,
@@ -67,16 +70,20 @@ PermanentAbilities = {
 }
 
 SpellEffects = {
-    "Opt" : ["draw 1"]
+    "Opt" : ["draw 1"],
+    "Brainstorm" : ["draw 3", "putinlibrary 2"],
+    "Pyretic Ritual" : ["addmana 0 3 0"],
 }
 
 class Game(object):
     def __init__(self):
         self.prior_casts = set() # set of StackObjects that were cast
-        self.mana = 0
+        self.mana = [0, 0, 0] # colorless, blue, red
         self.stack = []
         self.stackobjects = {}
         self.permanents = set()
+        self.cards_in_hand = 0
+        self.cards_in_library = 100
 
     def __Counter():
         i = 0
@@ -87,7 +94,7 @@ class Game(object):
     IdGenerator = __Counter()
 
     class StackObject(object):
-        def __init__(self, id, name, owner=OWNER_YOU, typ="Instant", scryfall=False, is_copy=False, on_resolution=[]):
+        def __init__(self, id, name, owner=OWNER_YOU, description="", typ="Instant", scryfall=False, is_copy=False, on_resolution=[]):
             if scryfall:
                 try:
                     card = scrython.cards.Named(fuzzy=name)
@@ -99,11 +106,14 @@ class Game(object):
             if not card:
                 self.name = name
                 self.typ = typ
-                self.description = ""
+                self.description = description
+                self.manacost = None
             else:
                 self.name = card.name().encode('ascii', 'ignore').decode('ascii')
                 self.typ = card.type_line().encode('ascii', 'ignore').decode('ascii')
                 self.description = card.oracle_text().encode('ascii', 'ignore').decode('ascii')
+                self.manacost = card.mana_cost()
+
             self.on_resolution = SpellEffects.get(self.name, []) + on_resolution
             self.owner = owner
             self.is_copy = is_copy
@@ -165,11 +175,29 @@ class Game(object):
         else:
             cmd = instruction
             other = None
+
         if cmd.lower() == CMD_ADDMANA:
-            self.mana += int(other)
+            self.mana = list(map(sum, zip(self.mana, map(int, other.split()))))
         elif cmd.lower() == CMD_CAST:
             name = other
             stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_YOU)
+            # spend mana: satisfy color requirements, then spend colorless, then spend what we have more of
+            if stackobj.manacost:
+                redreq = stackobj.manacost.count('{R}')
+                bluereq = stackobj.manacost.count('{U}')
+                otherre = re.match("\{[0-9]\}", stackobj.manacost)
+
+                self.mana[1] -= redreq
+                self.mana[2] -= bluereq
+                if otherre:
+                    for i in range(int(otherre.group()[1:-1])):
+                        if self.mana[0] > 0:
+                            self.mana[0] -= 1
+                        elif self.mana[1] > self.mana[2]:
+                            self.mana[1] -= 1
+                        else:
+                            self.mana[2] -= 1
+                
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
@@ -185,9 +213,19 @@ class Game(object):
         elif cmd.lower() == CMD_EFFECT:
             self.make_stackobject(other, typ="Effect")
         elif cmd.lower() == CMD_DRAW:
+            ncards = int(other)
+            self.cards_in_hand += ncards
+            self.cards_in_library -= ncards
             for listener in self.permanents:
-                for i in range(int(other)):
+                for i in range(ncards):
                     listener.ondraw()
+        elif cmd.lower() == CMD_PUTINLIBRARY:
+            ncards = int(other)
+            self.cards_in_hand -= ncards
+            self.cards_in_library += ncards
+        elif cmd.lower() == CMD_DISCARD:
+            ncards = int(other)
+            self.cards_in_hand -= ncards
         elif cmd.lower() == CMD_ECHO:
             self.log(other)
         elif cmd.lower() == CMD_PASSPRIORITY:
@@ -221,8 +259,8 @@ class GameDisplay():
         h, w = self.screen.getmaxyx()
         halfw = int(w/2)
 
-        self.inputscreen = curses.newwin(2, w, y, x)
-
+        self.inputscreen = curses.newwin(1, w, y, x)
+        self.statusline = curses.newwin(1, w, y+1, x)
         self.stackscreenborder = curses.newwin(h, halfw, y+2, x)
         self.stackscreenborder.border()
         self.stackscreenborder.noutrefresh()
@@ -234,7 +272,8 @@ class GameDisplay():
         self.logscreen = curses.newwin(h - 2, w-halfw - 2, y + 3, x + halfw)
 
     def send(self, message):
-        self.eventlog.append(message)
+        if message:
+            self.eventlog.append(message)
 
     def render_stack(self):
         self.stackscreen.clear()
@@ -246,17 +285,29 @@ class GameDisplay():
         self.logscreen.clear()
         lineno = 0
         maxnlines, linewidth = self.logscreen.getmaxyx()
-        for logmsg in self.eventlog:
+        for logmsg in reversed(self.eventlog):
             nlines = math.ceil(len(str(logmsg))/linewidth)
             for i in range(nlines):
-                if lineno + i < maxnlines:
+                if lineno + i + 1 < maxnlines:
                     self.logscreen.addstr(lineno + i, 0, str(logmsg[linewidth*i:linewidth*(i+1)]))
-            lineno += nlines
+            if lineno + nlines + 1 < maxnlines:
+                self.logscreen.addstr(lineno + nlines, 0, '-'*linewidth)
+            lineno += nlines + 1
         self.logscreen.noutrefresh()
+
+    def render_statusline(self):
+        self.statusline.clear()
+        self.statusline.addstr(0, 0, "Mana: ")
+        self.statusline.addstr(0, 7, "{0}".format(self.game.mana[0]))
+        self.statusline.addstr(0, 11, "R{0}".format(self.game.mana[1]), curses.color_pair(1))
+        self.statusline.addstr(0, 15, "B{0}".format(self.game.mana[2]), curses.color_pair(2))
+        self.statusline.addstr(0, 20, "{ncards} cards in hand".format(ncards=self.game.cards_in_hand))
+        self.statusline.noutrefresh()
 
     def run(self):
         runner = self.game.run()
         runner.send(None) # start consuming generator
+        runner.send("addmana 4 2 2")
         runner.send("cast Thousand-Year Storm")
         runner.send(CMD_PASSUNTILCLEAR)
         runner.send("cast Opt")
@@ -265,17 +316,19 @@ class GameDisplay():
             while True:
                 self.render_stack()
                 self.render_event_log()
+                self.render_statusline()
                 cmd = self.inputscreen.getstr(0, 0).decode() # b"" -> ""
                 self.inputscreen.clear()
                 self.inputscreen.noutrefresh()
                 curses.doupdate()
-                self.send(cmd)
                 runner.send(str(cmd))
         except StopIteration:
             pass
 
 def main(stdscr):
     curses.echo()
+    curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_BLUE, curses.COLOR_BLACK)
     g = Game()
     gDisplay = GameDisplay(stdscr, g)
     gDisplay.run()
