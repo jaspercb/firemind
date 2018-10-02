@@ -186,9 +186,11 @@ class Game(object):
             cmd = instruction
             other = None
 
-        if cmd.lower() == CMD_ADDMANA:
+        cmd = cmd.lower()
+
+        if cmd == CMD_ADDMANA:
             self.mana = list(map(sum, zip(self.mana, map(int, other.split()))))
-        elif cmd.lower() == CMD_CAST:
+        elif cmd == CMD_CAST:
             name = other
             stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_YOU)
             # spend mana: satisfy color requirements, then spend colorless, then spend what we have more of
@@ -211,37 +213,37 @@ class Game(object):
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
-        elif cmd.lower() == CMD_ENEMYCAST:
+        elif cmd == CMD_ENEMYCAST:
             name = other
             stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_OTHER)
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
-        elif cmd.lower() == CMD_COPY:
+        elif cmd == CMD_COPY:
             id = other
             self.copy_stackobject(id)
-        elif cmd.lower() == CMD_EFFECT:
+        elif cmd == CMD_EFFECT:
             self.make_stackobject(other, typ="Effect")
-        elif cmd.lower() == CMD_DRAW:
+        elif cmd == CMD_DRAW:
             ncards = int(other)
             self.draw(ncards)
-        elif cmd.lower() == CMD_PUTINLIBRARY:
+        elif cmd == CMD_PUTINLIBRARY:
             ncards = int(other)
             self.cards_in_hand -= ncards
             self.cards_in_library += ncards
-        elif cmd.lower() == CMD_DISCARD:
+        elif cmd == CMD_DISCARD:
             ncards = int(other)
             self.cards_in_hand -= ncards
-        elif cmd.lower() == CMD_MINDMOIL:
+        elif cmd == CMD_MINDMOIL:
             ncards = self.cards_in_hand
             self.cards_in_hand -= ncards
             self.cards_in_library += ncards
             self.draw(ncards)
-        elif cmd.lower() == CMD_ECHO:
+        elif cmd == CMD_ECHO:
             self.log(other)
-        elif cmd.lower() == CMD_PASSPRIORITY:
+        elif cmd == CMD_PASSPRIORITY:
             self.resolve()
-        elif cmd.lower() == CMD_PASSUNTILCLEAR:
+        elif cmd == CMD_PASSUNTILCLEAR:
             while self.stack:
                 self.resolve()
 
