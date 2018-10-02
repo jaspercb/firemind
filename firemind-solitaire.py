@@ -25,6 +25,7 @@ CMD_EFFECT = "effect"
 CMD_DRAW = "draw"
 CMD_DISCARD = "discard"
 CMD_PUTINLIBRARY = "putinlibrary"
+CMD_MINDMOIL = "mindmoil"
 CMD_ECHO = "echo"
 CMD_PASSPRIORITY = "passpriority"
 CMD_PASSUNTILCLEAR = "passuntilclear"
@@ -52,7 +53,7 @@ class ThousandYearStorm(Permanent):
 
 class Mindmoil(Permanent):
     def oncast(self, cast_obj):
-        self.game.make_stackobject("Put your hand on the bottom of your library, then draw that many cards", typ="Triggered Ability")
+        self.game.make_stackobject("Mindmoil trigger", description="Put your hand on the bottom of your library, then draw that many cards", typ="Triggered Ability", on_resolution=["mindmoil"])
 
 class NivMizzetParun(Permanent):
     def oncast(self, cast_obj):
@@ -73,6 +74,7 @@ SpellEffects = {
     "Opt" : ["draw 1"],
     "Brainstorm" : ["draw 3", "putinlibrary 2"],
     "Pyretic Ritual" : ["addmana 0 3 0"],
+    "Frantic Search" : ["draw 2", "discard 2"], # TODO: untap 3 lands
 }
 
 class Game(object):
@@ -169,6 +171,14 @@ class Game(object):
         if effect.name in PermanentAbilities:
             self.permanents.add(PermanentAbilities[effect.name](self))
 
+    def draw(self, ncards):
+        self.cards_in_hand += ncards
+        self.cards_in_library -= ncards
+        for listener in self.permanents:
+            for i in range(ncards):
+                listener.ondraw()
+
+
     def process_instruction(self, instruction):
         if ' ' in instruction:
             cmd, other = instruction.split(maxsplit=1)
@@ -214,11 +224,7 @@ class Game(object):
             self.make_stackobject(other, typ="Effect")
         elif cmd.lower() == CMD_DRAW:
             ncards = int(other)
-            self.cards_in_hand += ncards
-            self.cards_in_library -= ncards
-            for listener in self.permanents:
-                for i in range(ncards):
-                    listener.ondraw()
+            self.draw(ncards)
         elif cmd.lower() == CMD_PUTINLIBRARY:
             ncards = int(other)
             self.cards_in_hand -= ncards
@@ -226,6 +232,11 @@ class Game(object):
         elif cmd.lower() == CMD_DISCARD:
             ncards = int(other)
             self.cards_in_hand -= ncards
+        elif cmd.lower() == CMD_MINDMOIL:
+            ncards = self.cards_in_hand
+            self.cards_in_hand -= ncards
+            self.cards_in_library += ncards
+            self.draw(ncards)
         elif cmd.lower() == CMD_ECHO:
             self.log(other)
         elif cmd.lower() == CMD_PASSPRIORITY:
