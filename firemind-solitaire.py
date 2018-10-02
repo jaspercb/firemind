@@ -11,7 +11,7 @@ TODO:
 
 """
 
-import scrython
+import scryfall
 import re
 import math
 import copy
@@ -78,7 +78,7 @@ SpellEffects = {
 }
 
 class Game(object):
-    def __init__(self):
+    def __init__(self, scryfall_cacher):
         self.prior_casts = set() # set of StackObjects that were cast
         self.mana = [0, 0, 0] # colorless, blue, red
         self.stack = []
@@ -86,6 +86,7 @@ class Game(object):
         self.permanents = set()
         self.cards_in_hand = 0
         self.cards_in_library = 100
+        self.scryfall_cacher = scryfall_cacher
 
     def __Counter():
         i = 0
@@ -96,12 +97,9 @@ class Game(object):
     IdGenerator = __Counter()
 
     class StackObject(object):
-        def __init__(self, id, name, owner=OWNER_YOU, description="", typ="Instant", scryfall=False, is_copy=False, on_resolution=[]):
-            if scryfall:
-                try:
-                    card = scrython.cards.Named(fuzzy=name)
-                except:
-                    card = None
+        def __init__(self, id, name, owner=OWNER_YOU, description="", typ="Instant", scryfall_cacher=None, is_copy=False, on_resolution=[]):
+            if scryfall_cacher:
+                card = scryfall_cacher.cardnamed(name)
             else:
                 card = None
 
@@ -111,11 +109,10 @@ class Game(object):
                 self.description = description
                 self.manacost = None
             else:
-                self.name = card.name().encode('ascii', 'ignore').decode('ascii')
-                self.typ = card.type_line().encode('ascii', 'ignore').decode('ascii')
-                self.description = card.oracle_text().encode('ascii', 'ignore').decode('ascii')
-                self.manacost = card.mana_cost()
-
+                self.name = card['name'].encode('ascii', 'ignore').decode('ascii')
+                self.typ = card['type_line'].encode('ascii', 'ignore').decode('ascii')
+                self.description = card['oracle_text'].encode('ascii', 'ignore').decode('ascii')
+                self.manacost = card['mana_cost']
             self.on_resolution = SpellEffects.get(self.name, []) + on_resolution
             self.owner = owner
             self.is_copy = is_copy
@@ -192,7 +189,7 @@ class Game(object):
             self.mana = list(map(sum, zip(self.mana, map(int, other.split()))))
         elif cmd == CMD_CAST:
             name = other
-            stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_YOU)
+            stackobj = self.make_stackobject(name, scryfall_cacher=self.scryfall_cacher, owner=OWNER_YOU)
             # spend mana: satisfy color requirements, then spend colorless, then spend what we have more of
             if stackobj.manacost:
                 redreq = stackobj.manacost.count('{R}')
@@ -215,7 +212,7 @@ class Game(object):
             self.prior_casts.add(stackobj)
         elif cmd == CMD_ENEMYCAST:
             name = other
-            stackobj = self.make_stackobject(name, scryfall=True, owner=OWNER_OTHER)
+            stackobj = self.make_stackobject(name, use_scryfall=True, owner=OWNER_OTHER)
             for listener in self.permanents:
                 listener.oncast(stackobj)
             self.prior_casts.add(stackobj)
@@ -342,8 +339,9 @@ def main(stdscr):
     curses.echo()
     curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.init_pair(2, curses.COLOR_BLUE, curses.COLOR_BLACK)
-    g = Game()
-    gDisplay = GameDisplay(stdscr, g)
-    gDisplay.run()
+    with scryfall.ScrythonCacher() as scryfall_cacher:
+        g = Game(scryfall_cacher)
+        gDisplay = GameDisplay(stdscr, g)
+        gDisplay.run()
 
 curses.wrapper(main)
