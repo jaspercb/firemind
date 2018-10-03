@@ -8,7 +8,6 @@ TODO:
     * Add mana tracking (plus electromancer)
         * Smart mana spending?
     * Build in resolution effects of more spells
-
 """
 
 import scryfall
@@ -37,11 +36,21 @@ class Permanent(object):
     def __init__(self, game):
         self.game = game
 
+    def cost_reduction(self, cast_obj):
+        # returns: Int, cost reduction on cast obj
+        return 0
+
     def oncast(self, cast_obj):
         pass
 
     def ondraw(self):
         pass
+
+class GoblinElectromancer(Permanent):
+    def cost_reduction(self, cast_obj):
+        if cast_obj.typ in ("Instant", "Sorcery"):
+            return 1
+        return 0
 
 class ThousandYearStorm(Permanent):
     def oncast(self, spell):
@@ -67,7 +76,8 @@ PermanentAbilities = {
     "Thousand-Year Storm" : ThousandYearStorm,
     "Mindmoil" : Mindmoil,
     "Arjun, the Shifting Flame" : Mindmoil,
-    "Niv-Mizzet, Parun" : NivMizzetParun
+    "Niv-Mizzet, Parun" : NivMizzetParun,
+    "Goblin Electromancer" : GoblinElectromancer,
 }
 
 SpellEffects = {
@@ -199,7 +209,9 @@ class Game(object):
                 self.mana[1] -= redreq
                 self.mana[2] -= bluereq
                 if otherre:
-                    for i in range(int(otherre.group()[1:-1])):
+                    othercost = max(0, int(otherre.group()[1:-1]) - sum(perm.cost_reduction(stackobj) for perm in self.permanents))
+                    for i in range(othercost):
+                        # Use colorless mana if we can, target equal U and R otherwise
                         if self.mana[0] > 0:
                             self.mana[0] -= 1
                         elif self.mana[1] > self.mana[2]:
